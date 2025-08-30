@@ -246,7 +246,7 @@ contract StockTrading is Ownable {
             emit USDCTransferred(address(this), order.user, order.feeAmount);
         } else {
             // 卖单：返还锁定的股票代币
-            require(stockTokenContract.transfer(order.user, order.stockSymbol, order.lockedAmount), "Stock token refund failed");
+            require(stockTokenContract.transferFrom(tokenReceiver, order.user, order.stockSymbol, order.lockedAmount), "Stock token refund failed");
             
             emit OrderCancelled(_orderId, order.user, order.stockSymbol, order.lockedAmount, 0);
         }
