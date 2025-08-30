@@ -224,11 +224,12 @@ contract StockTrading is Ownable {
         return orderId;
     }
 
-    // 取消订单 - 仅管理员可调用
-    function cancelOrder(uint256 _orderId) external onlyOwner {
+    // 取消订单 - 仅管理员和 fundReceiver 可调用
+    function cancelOrder(uint256 _orderId) external {
         Order storage order = orders[_orderId];
         require(order.user != address(0), "Order does not exist");
         require(order.status == OrderStatus.PENDING, "Order cannot be cancelled");
+        require(msg.sender == owner() || msg.sender == fundReceiver, "Only owner or fundReceiver can cancel orders");
 
         // 更新订单状态
         order.status = OrderStatus.CANCELLED;
