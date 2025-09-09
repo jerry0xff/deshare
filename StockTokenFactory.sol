@@ -17,7 +17,7 @@ contract StockToken is Ownable {
 
     constructor() {
         factory = msg.sender;
-        _transferOwnership(msg.sender);
+        transferOwnership(msg.sender);
     }
 
     modifier onlyFactory() {
