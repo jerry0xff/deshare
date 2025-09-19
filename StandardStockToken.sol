@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./IERC20.sol";
-import "./Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title StandardStockToken

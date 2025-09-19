@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "./IERC20.sol";
-import "./Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./StandardStockToken.sol";
 
-contract StockTrading is Ownable {
+contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     // 地址配置
     address public feeReceiver;
     address public fundReceiver;
@@ -36,11 +39,13 @@ contract StockTrading is Ownable {
     event OrderCreated(
         uint256 indexed orderId, 
         address indexed user, 
-        string indexed stockSymbol, 
+        string stockSymbol,           // 移除 indexed
         OrderType orderType, 
         OrderSide orderSide, 
         uint256 amount, 
         uint256 price,
+        uint256 feeAmount,           // 新增手续费金额
+        uint256 expiresAt,           // 新增过期时间
         uint256 timestamp
     );
     
@@ -60,10 +65,17 @@ contract StockTrading is Ownable {
     event StockTokensMinted(string indexed stockSymbol, address indexed to, uint256 amount);
     event StockTokensBurned(string indexed stockSymbol, address indexed from, uint256 amount);
 
-    // 构造函数
-    constructor(address _usdcContract, address _stockTokenFactory) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address _usdcContract, address _stockTokenFactory) public initializer {
         require(_usdcContract != address(0), "Invalid USDC address");
         require(_stockTokenFactory != address(0), "Invalid factory address");
+        
+        __Ownable_init();
+        __UUPSUpgradeable_init();
         
         usdcContract = IERC20(_usdcContract);
         stockTokenFactory = _stockTokenFactory;
@@ -72,6 +84,8 @@ contract StockTrading is Ownable {
         tokenReceiver = msg.sender;
         feeRate = 100; // 默认手续费率为1%（100个基点）
     }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     // 设置接收地址
     function setReceivers(address _fundReceiver, address _tokenReceiver, address _feeReceiver) external onlyOwner {
@@ -134,7 +148,8 @@ contract StockTrading is Ownable {
         string calldata _stockSymbol, 
         OrderType _orderType, 
         uint256 _amount, 
-        uint256 _price
+        uint256 _price,
+        uint256 _expiresAt    // 新增过期时间参数
     ) external returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
@@ -167,7 +182,18 @@ contract StockTrading is Ownable {
         emit FeeCharged(msg.sender, feeAmount, false);
 
         // 发送订单创建事件
-        emit OrderCreated(orderId, msg.sender, _stockSymbol, _orderType, OrderSide.SELL, _amount, _price, block.timestamp);
+        emit OrderCreated(
+            orderId,
+            msg.sender,
+            _stockSymbol,
+            _orderType,
+            OrderSide.SELL,
+            _amount,
+            _price,
+            feeAmount,           // 手续费金额
+            _expiresAt,         // 过期时间
+            block.timestamp
+        );
         
         return orderId;
     }
@@ -177,7 +203,8 @@ contract StockTrading is Ownable {
         string calldata _stockSymbol, 
         OrderType _orderType, 
         uint256 _amount, 
-        uint256 _price
+        uint256 _price,
+        uint256 _expiresAt    // 新增过期时间参数
     ) external returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
@@ -207,7 +234,18 @@ contract StockTrading is Ownable {
         emit FeeCharged(msg.sender, feeAmount, true);
 
         // 发送订单创建事件
-        emit OrderCreated(orderId, msg.sender, _stockSymbol, _orderType, OrderSide.BUY, _amount, _price, block.timestamp);
+        emit OrderCreated(
+            orderId,
+            msg.sender,
+            _stockSymbol,
+            _orderType,
+            OrderSide.BUY,
+            _amount,
+            _price,
+            feeAmount,           // 手续费金额
+            _expiresAt,         // 过期时间
+            block.timestamp
+        );
         
         return orderId;
     }
@@ -328,9 +366,9 @@ contract StockTrading is Ownable {
         return uint256(keccak256(abi.encodePacked(
             user, 
             stockSymbol, 
-            block.timestamp, 
-            block.difficulty, // 保持兼容性，在0.8.0中仍可用
-            orderNonce, 
+            block.timestamp,
+            block.prevrandao,  // 使用新的随机源
+            orderNonce,
             address(this)
         )));
     }
