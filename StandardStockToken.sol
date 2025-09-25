@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "./IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title StandardStockToken
- * @dev 标准ERC20股票代币合约
- * 每个股票代币都是独立的ERC20合约实例
+ * @dev Standard ERC20 stock token contract
+ * Each stock token is an independent ERC20 contract instance
  */
 contract StandardStockToken is IERC20, Ownable {
     mapping(address => uint256) private _balances;
@@ -24,7 +24,7 @@ contract StandardStockToken is IERC20, Ownable {
     constructor(string memory _name, string memory _symbol) {
         name = _name;
         symbol = _symbol;
-        decimals = 8; // 股票代币使用8位小数
+        decimals = 8; // Stock tokens use 8 decimals
     }
 
     function totalSupply() public view override returns (uint256) {
@@ -59,7 +59,7 @@ contract StandardStockToken is IERC20, Ownable {
     }
 
     /**
-     * @dev 铸造代币 - 只有所有者可以调用
+     * @dev Mint tokens - only owner can call
      */
     function mint(address to, uint256 amount) external onlyOwner {
         require(to != address(0), "ERC20: mint to the zero address");
@@ -72,7 +72,7 @@ contract StandardStockToken is IERC20, Ownable {
     }
 
     /**
-     * @dev 销毁代币 - 只有所有者可以调用
+     * @dev Burn tokens - only owner can call
      */
     function burn(address from, uint256 amount) external onlyOwner {
         require(from != address(0), "ERC20: burn from the zero address");

@@ -9,59 +9,59 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./StandardStockToken.sol";
 
 contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
-    // 地址配置
+    // Address configuration
     address public feeReceiver;
     address public fundReceiver;
     address public tokenReceiver;
 
-    // USDC代币合约地址
-    IERC20 public usdcContract;
+    // USDT token contract address
+    IERC20 public usdtContract;
 
-    // StockTokenFactory合约地址
+    // StockTokenFactory contract address
     address public stockTokenFactory;
 
-    // 手续费率（以基点表示，1个基点 = 0.01%）
+    // Fee rate in basis points (1 basis point = 0.01%)
     uint256 public feeRate;
 
-    // 安全限制
-    uint256 public constant MAX_ORDER_AMOUNT = 1e26; // 最大订单数量 (考虑8位小数)
-    uint256 public constant MAX_PRICE = 1e12; // 最大单价 (考虑6位小数)
-    uint256 public constant MIN_FEE_RATE = 1; // 最小手续费率 0.01%
+    // Security limits
+    uint256 public constant MAX_ORDER_AMOUNT = 1e26; // Max order amount (8 decimals)
+    uint256 public constant MAX_PRICE = 1e12; // Max price (6 decimals)
+    uint256 public constant MIN_FEE_RATE = 1; // Min fee rate 0.01%
     
-    // 订单计数器 (用于生成安全的订单ID)
+    // Order counter for secure order ID generation
     uint256 private orderNonce;
 
-    // 交易类型枚举
+    // Trading type enums
     enum OrderType { LIMIT, MARKET }
     enum OrderSide { BUY, SELL }
 
-    // 事件 - 订单相关
+    // Events - Order related
     event OrderCreated(
         uint256 indexed orderId, 
         address indexed user, 
-        string stockSymbol,           // 移除 indexed
+        string stockSymbol,           // removed indexed
         OrderType orderType, 
         OrderSide orderSide, 
         uint256 amount, 
         uint256 price,
-        uint256 feeAmount,           // 新增手续费金额
-        uint256 expiresAt,           // 新增过期时间
+        uint256 feeAmount,           // fee amount
+        uint256 expiresAt,           // expiration time
         uint256 timestamp
     );
     
     event OrderFilled(uint256 indexed orderId, uint256 timestamp);
     event OrderCancelled(uint256 indexed orderId, uint256 timestamp);
     
-    // 事件 - 资金和代币转移
-    event USDCTransferred(address indexed from, address indexed to, uint256 amount);
+    // Events - Fund and token transfers
+    event USDTTransferred(address indexed from, address indexed to, uint256 amount);
     event StockTokenTransferred(address indexed from, address indexed to, string indexed stockSymbol, uint256 amount);
     
-    // 事件 - 手续费和配置
-    event FeeCharged(address indexed user, uint256 amount, bool isUSDC);
+    // Events - Fee and configuration
+    event FeeCharged(address indexed user, uint256 amount, bool isUSDT);
     event FeeRateUpdated(uint256 oldRate, uint256 newRate);
-    event FeesWithdrawn(address indexed receiver, uint256 amount, bool isUSDC);
+    event FeesWithdrawn(address indexed receiver, uint256 amount, bool isUSDT);
     
-    // 事件 - 代币铸造和销毁
+    // Events - Token minting and burning
     event StockTokensMinted(string indexed stockSymbol, address indexed to, uint256 amount);
     event StockTokensBurned(string indexed stockSymbol, address indexed from, uint256 amount);
 
@@ -70,24 +70,24 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         _disableInitializers();
     }
 
-    function initialize(address _usdcContract, address _stockTokenFactory) public initializer {
-        require(_usdcContract != address(0), "Invalid USDC address");
+    function initialize(address _usdtContract, address _stockTokenFactory) public initializer {
+        require(_usdtContract != address(0), "Invalid USDT address");
         require(_stockTokenFactory != address(0), "Invalid factory address");
         
         __Ownable_init();
         __UUPSUpgradeable_init();
         
-        usdcContract = IERC20(_usdcContract);
+        usdtContract = IERC20(_usdtContract);
         stockTokenFactory = _stockTokenFactory;
         feeReceiver = msg.sender;
         fundReceiver = msg.sender;
         tokenReceiver = msg.sender;
-        feeRate = 100; // 默认手续费率为1%（100个基点）
+        feeRate = 100; // Default fee rate 1% (100 basis points)
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
-    // 设置接收地址
+    // Set receiver addresses
     function setReceivers(address _fundReceiver, address _tokenReceiver, address _feeReceiver) external onlyOwner {
         require(_fundReceiver != address(0), "Invalid fund receiver");
         require(_tokenReceiver != address(0), "Invalid token receiver");
@@ -98,7 +98,7 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         feeReceiver = _feeReceiver;
     }
 
-    // 设置手续费率
+    // Set fee rate
     function setFeeRate(uint256 _feeRate) external onlyOwner {
         require(_feeRate >= MIN_FEE_RATE, "Fee rate too low");
         require(_feeRate <= 1000, "Fee rate cannot exceed 10%");
@@ -107,81 +107,93 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit FeeRateUpdated(oldRate, _feeRate);
     }
 
-    // 设置Factory合约地址
+    // Set factory contract address
     function setStockTokenFactory(address _stockTokenFactory) external onlyOwner {
         require(_stockTokenFactory != address(0), "Invalid factory address");
         stockTokenFactory = _stockTokenFactory;
     }
 
-    // 铸造股票代币 - 只有管理员可调用
+    // Mint stock tokens - owner only
     function mintStockTokens(string calldata _stockSymbol, address _to, uint256 _amount) external onlyOwner {
         require(_to != address(0), "Invalid recipient address");
         require(_amount > 0, "Amount must be greater than 0");
         
-        // 从Factory获取代币合约地址
+        // Get token contract address from Factory
         address tokenAddress = _getStockTokenAddress(_stockSymbol);
         require(tokenAddress != address(0), "Stock token does not exist");
         
-        // 调用代币合约的mint功能
+        // Call token contract mint function
         StandardStockToken(tokenAddress).mint(_to, _amount);
         
         emit StockTokensMinted(_stockSymbol, _to, _amount);
     }
 
-    // 销毁股票代币 - 只有管理员可调用
+    // Burn stock tokens - owner only
     function burnStockTokens(string calldata _stockSymbol, address _from, uint256 _amount) external onlyOwner {
         require(_from != address(0), "Invalid holder address");
         require(_amount > 0, "Amount must be greater than 0");
         
-        // 从Factory获取代币合约地址
+        // Get token contract address from Factory
         address tokenAddress = _getStockTokenAddress(_stockSymbol);
         require(tokenAddress != address(0), "Stock token does not exist");
         
-        // 调用代币合约的burn功能
+        // Call token contract burn function
         StandardStockToken(tokenAddress).burn(_from, _amount);
         
         emit StockTokensBurned(_stockSymbol, _from, _amount);
     }
 
-    // 创建卖单 - 不存储订单，只发送事件
+    // Create sell order - no storage, only events
     function createSellOrder(
         string calldata _stockSymbol, 
         OrderType _orderType, 
         uint256 _amount, 
         uint256 _price,
-        uint256 _expiresAt    // 新增过期时间参数
+        uint256 _expiresAt    // expiration time parameter
     ) external returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
             require(_price > 0 && _price <= MAX_PRICE, "Invalid price");
         }
 
-        // 获取股票代币合约
+        // Get stock token contract
         address tokenAddress = _getStockTokenAddress(_stockSymbol);
         require(tokenAddress != address(0), "Stock token does not exist");
         
         StandardStockToken stockToken = StandardStockToken(tokenAddress);
 
-        // 计算手续费
-        uint256 feeAmount = (_amount * feeRate) / 10000;
-        uint256 totalAmount = _amount + feeAmount;
+        // Calculate USDT-denominated order value and fee
+        uint256 orderValue = 0;
+        if (_price > 0) {
+            require(_amount <= type(uint256).max / _price, "Amount * price overflow");
+            orderValue = (_amount * _price) / 10**8; // Convert stock amount and price to USDT amount (6 decimals)
+        }
+        uint256 feeAmount = (orderValue * feeRate) / 10000;
 
-        // 检查余额和授权
-        require(stockToken.balanceOf(msg.sender) >= totalAmount, "Insufficient stock balance");
-        require(stockToken.allowance(msg.sender, address(this)) >= totalAmount, "Insufficient stock allowance");
+        // Check stock token balance and allowance (only lock sell amount, no token fee)
+        require(stockToken.balanceOf(msg.sender) >= _amount, "Insufficient stock balance");
+        require(stockToken.allowance(msg.sender, address(this)) >= _amount, "Insufficient stock allowance");
 
-        // 生成订单ID
+        // Check USDT balance and allowance if fee required
+        if (feeAmount > 0) {
+            require(usdtContract.balanceOf(msg.sender) >= feeAmount, "Insufficient USDT balance for fee");
+            require(usdtContract.allowance(msg.sender, address(this)) >= feeAmount, "Insufficient USDT allowance for fee");
+        }
+
+        // Generate order ID
         uint256 orderId = _generateOrderId(msg.sender, _stockSymbol);
 
-        // 转移代币到接收地址
+        // Transfer tokens to receiver
         require(stockToken.transferFrom(msg.sender, tokenReceiver, _amount), "Stock transfer failed");
         emit StockTokenTransferred(msg.sender, tokenReceiver, _stockSymbol, _amount);
 
-        // 收取手续费
-        require(stockToken.transferFrom(msg.sender, address(this), feeAmount), "Fee transfer failed");
-        emit FeeCharged(msg.sender, feeAmount, false);
+        // Collect USDT fee
+        if (feeAmount > 0) {
+            require(usdtContract.transferFrom(msg.sender, address(this), feeAmount), "USDT fee transfer failed");
+            emit FeeCharged(msg.sender, feeAmount, true);
+        }
 
-        // 发送订单创建事件
+        // Emit order creation event
         emit OrderCreated(
             orderId,
             msg.sender,
@@ -190,50 +202,50 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             OrderSide.SELL,
             _amount,
             _price,
-            feeAmount,           // 手续费金额
-            _expiresAt,         // 过期时间
+            feeAmount,           // fee amount
+            _expiresAt,         // expiration time
             block.timestamp
         );
         
         return orderId;
     }
 
-    // 创建买单 - 不存储订单，只发送事件
+    // Create buy order - no storage, only events
     function createBuyOrder(
         string calldata _stockSymbol, 
         OrderType _orderType, 
         uint256 _amount, 
         uint256 _price,
-        uint256 _expiresAt    // 新增过期时间参数
+        uint256 _expiresAt    // expiration time parameter
     ) external returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
             require(_price > 0 && _price <= MAX_PRICE, "Invalid price");
         }
 
-        // 计算所需USDC金额 - 防止溢出
+        // Calculate required USDT amount - prevent overflow
         require(_amount <= type(uint256).max / _price, "Amount * price overflow");
-        uint256 orderValue = (_amount * _price) / 10**8; // 除以10^8转换为USDC金额(6位小数)
+        uint256 orderValue = (_amount * _price) / 10**8; // Convert to USDT amount (6 decimals)
         uint256 feeAmount = (orderValue * feeRate) / 10000;
         require(orderValue <= type(uint256).max - feeAmount, "Total amount overflow");
         uint256 totalAmount = orderValue + feeAmount;
 
-        // 检查USDC余额和授权
-        require(usdcContract.balanceOf(msg.sender) >= totalAmount, "Insufficient USDC balance");
-        require(usdcContract.allowance(msg.sender, address(this)) >= totalAmount, "Insufficient USDC allowance");
+        // Check USDT balance and allowance
+        require(usdtContract.balanceOf(msg.sender) >= totalAmount, "Insufficient USDT balance");
+        require(usdtContract.allowance(msg.sender, address(this)) >= totalAmount, "Insufficient USDT allowance");
 
-        // 生成订单ID
+        // Generate order ID
         uint256 orderId = _generateOrderId(msg.sender, _stockSymbol);
 
-        // 转移USDC到接收地址
-        require(usdcContract.transferFrom(msg.sender, fundReceiver, orderValue), "USDC transfer failed");
-        emit USDCTransferred(msg.sender, fundReceiver, orderValue);
+        // Transfer USDT to receiver
+        require(usdtContract.transferFrom(msg.sender, fundReceiver, orderValue), "USDT transfer failed");
+        emit USDTTransferred(msg.sender, fundReceiver, orderValue);
 
-        // 收取手续费
-        require(usdcContract.transferFrom(msg.sender, address(this), feeAmount), "Fee transfer failed");
+        // Collect fee
+        require(usdtContract.transferFrom(msg.sender, address(this), feeAmount), "Fee transfer failed");
         emit FeeCharged(msg.sender, feeAmount, true);
 
-        // 发送订单创建事件
+        // Emit order creation event
         emit OrderCreated(
             orderId,
             msg.sender,
@@ -242,20 +254,20 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             OrderSide.BUY,
             _amount,
             _price,
-            feeAmount,           // 手续费金额
-            _expiresAt,         // 过期时间
+            feeAmount,           // fee amount
+            _expiresAt,         // expiration time
             block.timestamp
         );
         
         return orderId;
     }
 
-    // 标记订单为已完成 - 只发送事件，由后端调用
+    // Mark order as filled - only events, backend call
     function markOrderFilled(uint256 _orderId) external onlyOwner {
         emit OrderFilled(_orderId, block.timestamp);
     }
 
-    // 标记订单为已取消 - 处理退还逻辑，由后端调用
+    // Mark order as cancelled - handle refund logic, backend call
     function markOrderCancelled(
         uint256 _orderId,
         address _user,
@@ -264,17 +276,17 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 _refundAmount,
         uint256 _feeRefundAmount
     ) external onlyOwner {
-        // 1. Checks - 输入验证
+        // 1. Checks - input validation
         require(_user != address(0), "Invalid user address");
         require(_refundAmount > 0, "Refund amount must be greater than 0");
         
-        // 预先验证授权以避免失败
+        // Pre-validate allowance to avoid failure
         if (_isBuyOrder) {
-            require(usdcContract.allowance(fundReceiver, address(this)) >= _refundAmount, 
-                    "Insufficient USDC allowance for refund");
+            require(usdtContract.allowance(fundReceiver, address(this)) >= _refundAmount, 
+                    "Insufficient USDT allowance for refund");
             if (_feeRefundAmount > 0) {
-                require(usdcContract.balanceOf(address(this)) >= _feeRefundAmount,
-                        "Insufficient contract USDC balance for fee refund");
+                require(usdtContract.balanceOf(address(this)) >= _feeRefundAmount,
+                        "Insufficient contract USDT balance for fee refund");
             }
         } else {
             address tokenAddress = _getStockTokenAddress(_stockSymbol);
@@ -283,48 +295,49 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             StandardStockToken stockToken = StandardStockToken(tokenAddress);
             require(stockToken.allowance(tokenReceiver, address(this)) >= _refundAmount,
                     "Insufficient token allowance for refund");
+            // Sell order fee collected in USDT, check contract USDT balance for fee refund
             if (_feeRefundAmount > 0) {
-                require(stockToken.balanceOf(address(this)) >= _feeRefundAmount,
-                        "Insufficient contract token balance for fee refund");
+                require(usdtContract.balanceOf(address(this)) >= _feeRefundAmount,
+                        "Insufficient contract USDT balance for fee refund");
             }
         }
         
-        // 2. Effects - 状态更新（发送事件）
+        // 2. Effects - state update (emit events)
         emit OrderCancelled(_orderId, block.timestamp);
         
-        // 3. Interactions - 外部调用
+        // 3. Interactions - external calls
         if (_isBuyOrder) {
-            // 买单退还USDC - 从fundReceiver退还给用户
-            require(usdcContract.transferFrom(fundReceiver, _user, _refundAmount), "USDC refund failed");
-            emit USDCTransferred(fundReceiver, _user, _refundAmount);
+            // Buy order refund USDT - from fundReceiver to user
+            require(usdtContract.transferFrom(fundReceiver, _user, _refundAmount), "USDT refund failed");
+            emit USDTTransferred(fundReceiver, _user, _refundAmount);
             
-            // 退还手续费（从合约余额）
+            // Refund fee (from contract balance)
             if (_feeRefundAmount > 0) {
-                require(usdcContract.transfer(_user, _feeRefundAmount), "USDC fee refund failed");
-                emit USDCTransferred(address(this), _user, _feeRefundAmount);
+                require(usdtContract.transfer(_user, _feeRefundAmount), "USDT fee refund failed");
+                emit USDTTransferred(address(this), _user, _feeRefundAmount);
             }
         } else {
-            // 卖单退还股票代币 - 从tokenReceiver退还给用户
+            // Sell order refund stock tokens - from tokenReceiver to user
             address tokenAddress = _getStockTokenAddress(_stockSymbol);
             StandardStockToken stockToken = StandardStockToken(tokenAddress);
             
             require(stockToken.transferFrom(tokenReceiver, _user, _refundAmount), "Stock token refund failed");
             emit StockTokenTransferred(tokenReceiver, _user, _stockSymbol, _refundAmount);
             
-            // 退还手续费（从合约余额）
+            // Refund fee (USDT, from contract balance)
             if (_feeRefundAmount > 0) {
-                require(stockToken.transfer(_user, _feeRefundAmount), "Stock token fee refund failed");
-                emit StockTokenTransferred(address(this), _user, _stockSymbol, _feeRefundAmount);
+                require(usdtContract.transfer(_user, _feeRefundAmount), "USDT fee refund failed");
+                emit USDTTransferred(address(this), _user, _feeRefundAmount);
             }
         }
     }
 
-    // 提取手续费
-    function withdrawFees(string calldata _stockSymbol, bool isUSDC) external onlyOwner {
-        if (isUSDC) {
-            uint256 balance = usdcContract.balanceOf(address(this));
-            require(balance > 0, "No USDC fees to withdraw");
-            require(usdcContract.transfer(feeReceiver, balance), "USDC withdrawal failed");
+    // Withdraw fees
+    function withdrawFees(string calldata _stockSymbol, bool isUSDT) external onlyOwner {
+        if (isUSDT) {
+            uint256 balance = usdtContract.balanceOf(address(this));
+            require(balance > 0, "No USDT fees to withdraw");
+            require(usdtContract.transfer(feeReceiver, balance), "USDT withdrawal failed");
             emit FeesWithdrawn(feeReceiver, balance, true);
         } else {
             address tokenAddress = _getStockTokenAddress(_stockSymbol);
@@ -338,17 +351,17 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         }
     }
 
-    // 计算手续费
+    // Calculate fee
     function calculateFee(uint256 amount) public view returns (uint256) {
         return (amount * feeRate) / 10000;
     }
 
-    // 获取股票代币合约地址
+    // Get stock token contract address
     function getStockTokenAddress(string calldata _stockSymbol) external view returns (address) {
         return _getStockTokenAddress(_stockSymbol);
     }
 
-    // 内部函数：从Factory获取股票代币合约地址
+    // Internal function: get stock token contract address from Factory
     function _getStockTokenAddress(string calldata _stockSymbol) internal view returns (address) {
         (bool success, bytes memory data) = stockTokenFactory.staticcall(
             abi.encodeWithSignature("getStockTokenAddress(string)", _stockSymbol)
@@ -360,14 +373,14 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         return address(0);
     }
 
-    // 内部函数：生成订单ID
+    // Internal function: generate order ID
     function _generateOrderId(address user, string memory stockSymbol) internal returns (uint256) {
         orderNonce++;
         return uint256(keccak256(abi.encodePacked(
             user, 
             stockSymbol, 
             block.timestamp,
-            block.prevrandao,  // 使用新的随机源
+            block.prevrandao,  // use new randomness source
             orderNonce,
             address(this)
         )));
