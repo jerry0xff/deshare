@@ -5,10 +5,10 @@ import "./IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "./StandardStockToken.sol";
 
-contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
     // Address configuration
     address public feeReceiver;
     address public fundReceiver;
@@ -76,6 +76,7 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         
         __Ownable_init();
         __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
         
         usdtContract = IERC20(_usdtContract);
         stockTokenFactory = _stockTokenFactory;
@@ -150,7 +151,7 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 _amount, 
         uint256 _price,
         uint256 _expiresAt    // expiration time parameter
-    ) external returns (uint256) {
+    ) external nonReentrant returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
             require(_price > 0 && _price <= MAX_PRICE, "Invalid price");
@@ -162,13 +163,24 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         
         StandardStockToken stockToken = StandardStockToken(tokenAddress);
 
-        // Calculate USDT-denominated order value and fee
+        // Enhanced math checks for sell orders
         uint256 orderValue = 0;
+        uint256 feeAmount = 0;
+        
         if (_price > 0) {
+            // Prevent overflow in multiplication
             require(_amount <= type(uint256).max / _price, "Amount * price overflow");
-            orderValue = (_amount * _price) / 10**8; // Convert stock amount and price to USDT amount (6 decimals)
+            
+            uint256 rawValue = _amount * _price;
+            require(rawValue >= 10**8, "Value too small for conversion");
+            orderValue = rawValue / 10**8; // Convert stock amount and price to USDT amount (6 decimals)
+            
+            // Safe fee calculation with overflow check
+            if (orderValue > 0) {
+                require(orderValue <= type(uint256).max / feeRate, "Fee calculation overflow");
+                feeAmount = (orderValue * feeRate) / 10000;
+            }
         }
-        uint256 feeAmount = (orderValue * feeRate) / 10000;
 
         // Check stock token balance and allowance (only lock sell amount, no token fee)
         require(stockToken.balanceOf(msg.sender) >= _amount, "Insufficient stock balance");
@@ -217,15 +229,23 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 _amount, 
         uint256 _price,
         uint256 _expiresAt    // expiration time parameter
-    ) external returns (uint256) {
+    ) external nonReentrant returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
             require(_price > 0 && _price <= MAX_PRICE, "Invalid price");
         }
 
-        // Calculate required USDT amount - prevent overflow
+        // Enhanced math checks - prevent overflow and ensure valid calculations
+        require(_price > 0, "Price must be positive");
         require(_amount <= type(uint256).max / _price, "Amount * price overflow");
-        uint256 orderValue = (_amount * _price) / 10**8; // Convert to USDT amount (6 decimals)
+        
+        uint256 rawValue = _amount * _price;
+        require(rawValue >= 10**8, "Value too small for conversion");
+        uint256 orderValue = rawValue / 10**8; // Convert to USDT amount (6 decimals)
+        require(orderValue > 0, "Order value cannot be zero");
+        
+        // Safe fee calculation with overflow check
+        require(orderValue <= type(uint256).max / feeRate, "Fee calculation overflow");
         uint256 feeAmount = (orderValue * feeRate) / 10000;
         require(orderValue <= type(uint256).max - feeAmount, "Total amount overflow");
         uint256 totalAmount = orderValue + feeAmount;
@@ -275,7 +295,7 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         bool _isBuyOrder,
         uint256 _refundAmount,
         uint256 _feeRefundAmount
-    ) external onlyOwner {
+    ) external onlyOwner nonReentrant {
         // 1. Checks - input validation
         require(_user != address(0), "Invalid user address");
         require(_refundAmount > 0, "Refund amount must be greater than 0");
@@ -333,7 +353,7 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     // Withdraw fees
-    function withdrawFees(string calldata _stockSymbol, bool isUSDT) external onlyOwner {
+    function withdrawFees(string calldata _stockSymbol, bool isUSDT) external onlyOwner nonReentrant {
         if (isUSDT) {
             uint256 balance = usdtContract.balanceOf(address(this));
             require(balance > 0, "No USDT fees to withdraw");
