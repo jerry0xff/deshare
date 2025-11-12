@@ -31,6 +31,9 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
     // Order counter for secure order ID generation
     uint256 private orderNonce;
 
+    // Minimum fee amount in USDT (6 decimals)
+    uint256 public minFeeAmount;
+
     // Trading type enums
     enum OrderType { LIMIT, MARKET }
     enum OrderSide { BUY, SELL }
@@ -84,6 +87,7 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         fundReceiver = msg.sender;
         tokenReceiver = msg.sender;
         feeRate = 100; // Default fee rate 1% (100 basis points)
+        minFeeAmount = 500000; // 0.5 USDT
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
@@ -106,6 +110,17 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         uint256 oldRate = feeRate;
         feeRate = _feeRate;
         emit FeeRateUpdated(oldRate, _feeRate);
+    }
+
+    // Set minimum fee amount
+    function setMinFeeAmount(uint256 _minFeeAmount) external onlyOwner {
+        minFeeAmount = _minFeeAmount;
+    }
+
+    // Set USDT contract address
+    function setUsdtContract(address _usdtContract) external onlyOwner {
+        require(_usdtContract != address(0), "Invalid USDT address");
+        usdtContract = IERC20(_usdtContract);
     }
 
     // Set factory contract address
@@ -178,7 +193,8 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
             // Safe fee calculation with overflow check
             if (orderValue > 0) {
                 require(orderValue <= type(uint256).max / feeRate, "Fee calculation overflow");
-                feeAmount = (orderValue * feeRate) / 10000;
+                uint256 calculatedFee = (orderValue * feeRate) / 10000;
+                feeAmount = calculatedFee > minFeeAmount ? calculatedFee : minFeeAmount;
             }
         }
 
@@ -246,7 +262,8 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         
         // Safe fee calculation with overflow check
         require(orderValue <= type(uint256).max / feeRate, "Fee calculation overflow");
-        uint256 feeAmount = (orderValue * feeRate) / 10000;
+        uint256 calculatedFee = (orderValue * feeRate) / 10000;
+        uint256 feeAmount = calculatedFee > minFeeAmount ? calculatedFee : minFeeAmount;
         require(orderValue <= type(uint256).max - feeAmount, "Total amount overflow");
         uint256 totalAmount = orderValue + feeAmount;
 
@@ -373,7 +390,8 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
 
     // Calculate fee
     function calculateFee(uint256 amount) public view returns (uint256) {
-        return (amount * feeRate) / 10000;
+        uint256 calculatedFee = (amount * feeRate) / 10000;
+        return calculatedFee > minFeeAmount ? calculatedFee : minFeeAmount;
     }
 
     // Get stock token contract address
