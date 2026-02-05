@@ -46,9 +46,10 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         OrderType orderType, 
         OrderSide orderSide, 
         uint256 amount, 
-        uint256 price,
+        uint256 price, 
         uint256 feeAmount,           // fee amount
         uint256 expiresAt,           // expiration time
+        uint256 marginLevel,         // added margin level
         uint256 timestamp
     );
     
@@ -232,6 +233,7 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
             _price,
             feeAmount,           // fee amount
             _expiresAt,         // expiration time
+            0,                   // marginLevel default for sell orders
             block.timestamp
         );
         
@@ -244,7 +246,8 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         OrderType _orderType, 
         uint256 _amount, 
         uint256 _price,
-        uint256 _expiresAt    // expiration time parameter
+        uint256 _expiresAt,   // expiration time parameter
+        uint256 _marginLevel  // added margin level parameter
     ) external nonReentrant returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
@@ -293,6 +296,7 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
             _price,
             feeAmount,           // fee amount
             _expiresAt,         // expiration time
+            _marginLevel,        // margin level
             block.timestamp
         );
         
