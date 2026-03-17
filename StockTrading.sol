@@ -37,6 +37,10 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
     // Trading type enums
     enum OrderType { LIMIT, MARKET }
     enum OrderSide { BUY, SELL }
+    enum AssetType { HK, US, SG, JP, KR, IPO, OT }
+
+    // Mapping for asset specific fee rates
+    mapping(AssetType => uint256) public assetFeeRates;
 
     // Events - Order related
     event OrderCreated(
@@ -48,9 +52,11 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         uint256 amount, 
         uint256 price, 
         uint256 feeAmount,           // fee amount
+        uint256 interest,            // interest amount (USDT, 6 decimals)
         uint256 expiresAt,           // expiration time
-        uint256 marginLevel,         // added margin level
-        uint256 timestamp
+        uint256 marginLevel,         // margin level
+        uint256 timestamp,
+        AssetType assetType          // asset type
     );
     
     event OrderFilled(uint256 indexed orderId, uint256 timestamp);
@@ -113,6 +119,13 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         emit FeeRateUpdated(oldRate, _feeRate);
     }
 
+    // Set asset specific fee rate
+    function setAssetFeeRate(AssetType _assetType, uint256 _feeRate) external onlyOwner {
+        require(_feeRate >= MIN_FEE_RATE, "Fee rate too low");
+        require(_feeRate <= 1000, "Fee rate cannot exceed 10%");
+        assetFeeRates[_assetType] = _feeRate;
+    }
+
     // Set minimum fee amount
     function setMinFeeAmount(uint256 _minFeeAmount) external onlyOwner {
         minFeeAmount = _minFeeAmount;
@@ -167,7 +180,9 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         uint256 _amount, 
         uint256 _price,
         uint256 _expiresAt,   // expiration time parameter
-        uint256 _marginLevel  // added margin level parameter
+        uint256 _marginLevel, // margin level parameter
+        uint256 _interest,    // interest amount (USDT, 6 decimals)
+        AssetType _assetType  // asset type parameter
     ) external nonReentrant returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
@@ -194,20 +209,27 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
             
             // Safe fee calculation with overflow check
             if (orderValue > 0) {
-                require(orderValue <= type(uint256).max / feeRate, "Fee calculation overflow");
-                uint256 calculatedFee = (orderValue * feeRate) / 10000;
+                uint256 currentFeeRate = assetFeeRates[_assetType];
+                if (currentFeeRate == 0) {
+                    currentFeeRate = feeRate;
+                }
+                require(orderValue <= type(uint256).max / currentFeeRate, "Fee calculation overflow");
+                uint256 calculatedFee = (orderValue * currentFeeRate) / 10000;
                 feeAmount = calculatedFee > minFeeAmount ? calculatedFee : minFeeAmount;
             }
         }
+
+        // Total USDT to collect from user = fee + interest
+        uint256 totalUsdtRequired = feeAmount + _interest;
 
         // Check stock token balance and allowance (only lock sell amount, no token fee)
         require(stockToken.balanceOf(msg.sender) >= _amount, "Insufficient stock balance");
         require(stockToken.allowance(msg.sender, address(this)) >= _amount, "Insufficient stock allowance");
 
-        // Check USDT balance and allowance if fee required
-        if (feeAmount > 0) {
-            require(usdtContract.balanceOf(msg.sender) >= feeAmount, "Insufficient USDT balance for fee");
-            require(usdtContract.allowance(msg.sender, address(this)) >= feeAmount, "Insufficient USDT allowance for fee");
+        // Check USDT balance and allowance if fee + interest required
+        if (totalUsdtRequired > 0) {
+            require(usdtContract.balanceOf(msg.sender) >= totalUsdtRequired, "Insufficient USDT balance for fee and interest");
+            require(usdtContract.allowance(msg.sender, address(this)) >= totalUsdtRequired, "Insufficient USDT allowance for fee and interest");
         }
 
         // Generate order ID
@@ -217,10 +239,10 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         require(stockToken.transferFrom(msg.sender, tokenReceiver, _amount), "Stock transfer failed");
         emit StockTokenTransferred(msg.sender, tokenReceiver, _stockSymbol, _amount);
 
-        // Collect USDT fee
-        if (feeAmount > 0) {
-            require(usdtContract.transferFrom(msg.sender, address(this), feeAmount), "USDT fee transfer failed");
-            emit FeeCharged(msg.sender, feeAmount, true);
+        // Collect USDT fee + interest in one transfer
+        if (totalUsdtRequired > 0) {
+            require(usdtContract.transferFrom(msg.sender, address(this), totalUsdtRequired), "USDT fee+interest transfer failed");
+            emit FeeCharged(msg.sender, totalUsdtRequired, true);
         }
 
         // Emit order creation event
@@ -228,14 +250,16 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
             orderId,
             msg.sender,
             _stockSymbol,
-            _orderType,
+            _orderType, 
             OrderSide.SELL,
             _amount,
             _price,
             feeAmount,           // fee amount
-            _expiresAt,         // expiration time
+            _interest,           // interest amount
+            _expiresAt,          // expiration time
             _marginLevel,        // margin level
-            block.timestamp
+            block.timestamp,
+            _assetType
         );
         
         return orderId;
@@ -248,7 +272,9 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         uint256 _amount, 
         uint256 _price,
         uint256 _expiresAt,   // expiration time parameter
-        uint256 _marginLevel  // added margin level parameter
+        uint256 _marginLevel, // margin level parameter
+        uint256 _interest,    // interest amount (USDT, 6 decimals)
+        AssetType _assetType  // asset type parameter
     ) external nonReentrant returns (uint256) {
         require(_amount > 0 && _amount <= MAX_ORDER_AMOUNT, "Invalid amount");
         if (_orderType == OrderType.LIMIT) {
@@ -265,11 +291,17 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         require(orderValue > 0, "Order value cannot be zero");
         
         // Safe fee calculation with overflow check
-        require(orderValue <= type(uint256).max / feeRate, "Fee calculation overflow");
-        uint256 calculatedFee = (orderValue * feeRate) / 10000;
+        uint256 currentFeeRate = assetFeeRates[_assetType];
+        if (currentFeeRate == 0) {
+            currentFeeRate = feeRate;
+        }
+        require(orderValue <= type(uint256).max / currentFeeRate, "Fee calculation overflow");
+        uint256 calculatedFee = (orderValue * currentFeeRate) / 10000;
         uint256 feeAmount = calculatedFee > minFeeAmount ? calculatedFee : minFeeAmount;
-        require(orderValue <= type(uint256).max - feeAmount, "Total amount overflow");
-        uint256 totalAmount = orderValue + feeAmount;
+        
+        // Total amount = order value + fee + interest
+        require(orderValue <= type(uint256).max - feeAmount - _interest, "Total amount overflow");
+        uint256 totalAmount = orderValue + feeAmount + _interest;
 
         // Check USDT balance and allowance
         require(usdtContract.balanceOf(msg.sender) >= totalAmount, "Insufficient USDT balance");
@@ -278,13 +310,14 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
         // Generate order ID
         uint256 orderId = _generateOrderId(msg.sender, _stockSymbol);
 
-        // Transfer USDT to receiver
+        // Transfer USDT order value to fund receiver
         require(usdtContract.transferFrom(msg.sender, fundReceiver, orderValue), "USDT transfer failed");
         emit USDTTransferred(msg.sender, fundReceiver, orderValue);
 
-        // Collect fee
-        require(usdtContract.transferFrom(msg.sender, address(this), feeAmount), "Fee transfer failed");
-        emit FeeCharged(msg.sender, feeAmount, true);
+        // Collect fee + interest to contract
+        uint256 feeAndInterest = feeAmount + _interest;
+        require(usdtContract.transferFrom(msg.sender, address(this), feeAndInterest), "Fee+interest transfer failed");
+        emit FeeCharged(msg.sender, feeAndInterest, true);
 
         // Emit order creation event
         emit OrderCreated(
@@ -296,9 +329,11 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
             _amount,
             _price,
             feeAmount,           // fee amount
-            _expiresAt,         // expiration time
+            _interest,           // interest amount
+            _expiresAt,          // expiration time
             _marginLevel,        // margin level
-            block.timestamp
+            block.timestamp,
+            _assetType
         );
         
         return orderId;
@@ -394,8 +429,12 @@ contract StockTrading is Initializable, OwnableUpgradeable, UUPSUpgradeable, Ree
     }
 
     // Calculate fee
-    function calculateFee(uint256 amount) public view returns (uint256) {
-        uint256 calculatedFee = (amount * feeRate) / 10000;
+    function calculateFee(uint256 amount, AssetType _assetType) public view returns (uint256) {
+        uint256 currentFeeRate = assetFeeRates[_assetType];
+        if (currentFeeRate == 0) {
+            currentFeeRate = feeRate;
+        }
+        uint256 calculatedFee = (amount * currentFeeRate) / 10000;
         return calculatedFee > minFeeAmount ? calculatedFee : minFeeAmount;
     }
 
